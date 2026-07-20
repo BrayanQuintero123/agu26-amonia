@@ -147,7 +147,7 @@ def select_plume_auto(plot_xch4, ref_rad, mission, gas, lat, lon, list_gcp,
 
     if decision == 'n':
         plt.close()
-        return None, False, None
+        return None, False, None, sigma_mult
 
     #--- 1) zoom + enter ---
     plt.show(block=False); plt.pause(0.1)
@@ -230,19 +230,31 @@ def select_plume_auto(plot_xch4, ref_rad, mission, gas, lat, lon, list_gcp,
             print('Not a valid answer.'); continue
 
     plt.close(fig)
-    return mask, bool_det, source_coord
+    return mask, bool_det, source_coord, k
+
+
+def _safe_render_map(mask, gas_enh, ref_rad, lat, lon, list_gcp, lat_s, lon_s, gas, psave, name, sigma_used):
+    #Auto-generate the plume-on-basemap PNG right after acceptance (no double work, correct path).
+    #Lazy import breaks the auto_plume <-> plot_plume_map cycle; try/except so a map failure never
+    #loses the already-computed Q.
+    try:
+        from plot_plume_map import render_plume_map
+        render_plume_map(mask, gas_enh, ref_rad, lat, lon, list_gcp, lat_s, lon_s, gas, psave, name, sigma=sigma_used)
+    except Exception as e:
+        print(f'  [map] could not render plume map ({e}); the Q result is unaffected.')
 
 
 def emission_quantification_auto(dxgas_show, dxgas_quan, ref_rad, mission, gas, path_folder, name, psave,
                                  sigma_mult=DEFAULT_SIGMA_MULT):
     """Copy of quant_func_v2.emission_quantification, but using select_plume_auto (semi-automatic
     delineation) and wind_speed_bilinear (bilinear GEOS-FP). extract_Q / ppmm_to_kg / georreference
-    / Ueff are the ORIGINAL LARS functions, reused unchanged."""
+    / Ueff are the ORIGINAL LARS functions, reused unchanged. On acceptance it also auto-renders the
+    plume-on-basemap PNG (plot_plume_map.render_plume_map)."""
 
     ts, lat_c, lon_c, lat, lon = location_and_time(path_folder, name, mission)
     list_gcp = gcp_from_placemark(path_folder + 'placemark_' + name + '.placemark')
 
-    mask, bool_det, source_coord = select_plume_auto(dxgas_show, ref_rad, mission, gas, lat, lon, list_gcp, sigma_mult)
+    mask, bool_det, source_coord, sigma_used = select_plume_auto(dxgas_show, ref_rad, mission, gas, lat, lon, list_gcp, sigma_mult)
 
     if gas in ('ch4', 'co2', 'c2h4', 'c2h2'):
         if bool_det:
@@ -251,6 +263,7 @@ def emission_quantification_auto(dxgas_show, dxgas_quan, ref_rad, mission, gas, 
                 lat_s, lon_s = lat[source_coord[1], source_coord[0]], lon[source_coord[1], source_coord[0]]
             u10 = wind_speed_bilinear(ts, lat_s, lon_s, path_folder, psave, name)
             Q, err_Q, u10, err_u10 = extract_Q(dxgas_quan, mask, u10, mission, gas)
+            _safe_render_map(mask, dxgas_show, ref_rad, lat, lon, list_gcp, lat_s, lon_s, gas, psave, name, sigma_used)
         else:
             Q, err_Q, u10, err_u10, lat_s, lon_s = None, None, None, None, None, None
             print('No detection')
@@ -263,6 +276,7 @@ def emission_quantification_auto(dxgas_show, dxgas_quan, ref_rad, mission, gas, 
                 lat_s, lon_s = lat[source_coord[1], source_coord[0]], lon[source_coord[1], source_coord[0]]
             u10 = wind_speed_bilinear(ts, lat_s, lon_s, path_folder, psave, name)
             Q_1, err_Q_1, Q_2, err_Q_2, u10, err_u10 = extract_Q(dxgas_quan, mask, u10, mission, gas)
+            _safe_render_map(mask, dxgas_show, ref_rad, lat, lon, list_gcp, lat_s, lon_s, gas, psave, name, sigma_used)
         else:
             Q_1, err_Q_1, Q_2, err_Q_2, u10, err_u10, lat_s, lon_s = None, None, None, None, None, None, None, None
             print('No detection')

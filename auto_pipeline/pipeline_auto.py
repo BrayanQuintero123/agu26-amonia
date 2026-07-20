@@ -31,16 +31,7 @@ for _p in (_SCRIPTS, _HERE):
 from hs_tool4_deltaxgas import deltax_rets            # original L1->L2 retrieval (all gases at once)
 from store_results import excel_info                   # original CSV writer
 from auto_plume import emission_quantification_auto     # semi-automatic quantification
-
-#gas -> (show_band, quan_band): show is what we detect/delineate on, quan is what we integrate (IME).
-#Indices verified against the cube band names produced by hs_tool4_deltaxgas.retrieval_maps.
-GAS_BANDS = {
-    'ch4':  (1, 1),     # ch4-MF(ppmm)
-    'co2':  (3, 3),     # co2-MF(ppmm)  (Ueff = u10 simplification)
-    'c2h4': (11, 7),    # show: c2h4-MF-SWIR ; quan: c2h4-MF-2300nm
-    'c2h2': (25, 23),   # show: c2h2-MF-SWIR ; quan: c2h2-MF-1500nm
-    'nh3':  (19, 13),   # show: nh3-MF-SWIR  ; quan: nh3-MF-2300nm  (also gives tau=1h estimate)
-}
+from gas_bands import GAS_BANDS                          # gas -> (show_band, quan_band)
 
 
 def _run_one_gas(cube, mission, gas, p, n, psave, site, sigma):
