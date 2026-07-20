@@ -1,0 +1,14 @@
+# Data (never commit — the EMIT RAD .nc is 1.8 GB, GitHub rejects >100 MB)
+*.nc
+*.placemark
+output/
+*.npy
+
+# Python
+__pycache__/
+*.pyc
+.ipynb_checkpoints/
+
+# OS / editors
+.DS_Store
+Thumbs.db
