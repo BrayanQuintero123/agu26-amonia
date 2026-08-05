@@ -43,7 +43,7 @@ from gas_bands import GAS_BANDS
 
 
 def render_plume_map(mask, gas_enh, rad, lat, lon, list_gcp, lat_src, lon_src,
-                     gas, psave, name, sigma=None, pad_deg=0.012):
+                     gas, psave, name, sigma=None, pad_deg=0.012, wind_uv=None):
     """Render the (already-accepted) plume mask over satellite / OSM / radiance basemaps.
     Renders off-screen (Agg canvas) so it never disturbs an interactive matplotlib session.
     Saves output/plume_on_map_<gas>.png and returns its path (or None if the mask is empty)."""
@@ -85,16 +85,21 @@ def render_plume_map(mask, gas_enh, rad, lat, lon, list_gcp, lat_src, lon_src,
     except ImportError:
         ctx_ok = False
 
-    #--- wind vector (downwind direction) from the bilinear cache, for false-positive screening ---
+    #--- wind vector (downwind direction), for false-positive screening ---
     #A real plume should extend DOWNWIND (along this arrow). Perpendicular/opposite = suspect.
+    #Prefer the wind actually used for Q (wind_uv from the pipeline); else fall back to the GEOS cache.
     wind = None
-    wpath = os.path.join(psave, name + '_u_arr_bilinear.npy')
-    if os.path.exists(wpath):
-        wa = np.load(wpath)
-        u10v, uxv, uyv = float(wa[0]), float(wa[1]), float(wa[2])  # magnitude, U10M (east), V10M (north)
-        wmag = np.hypot(uxv, uyv)
-        if wmag > 1e-6:
-            wind = (u10v, uxv / wmag, uyv / wmag)
+    if wind_uv is not None:
+        u10v, uxv, uyv = float(wind_uv[0]), float(wind_uv[1]), float(wind_uv[2])
+    else:
+        wa = None
+        wpath = os.path.join(psave, name + '_u_arr_bilinear.npy')
+        if os.path.exists(wpath):
+            wa = np.load(wpath)
+        u10v, uxv, uyv = (float(wa[0]), float(wa[1]), float(wa[2])) if wa is not None else (0.0, 0.0, 0.0)
+    wmag = np.hypot(uxv, uyv)
+    if wmag > 1e-6:
+        wind = (u10v, uxv / wmag, uyv / wmag)
 
     fig = Figure(figsize=(26, 9))
     FigureCanvasAgg(fig)

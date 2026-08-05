@@ -34,7 +34,8 @@ from auto_plume import emission_quantification_auto     # semi-automatic quantif
 from gas_bands import GAS_BANDS                          # gas -> (show_band, quan_band)
 
 
-def _run_one_gas(cube, mission, gas, p, n, psave, site, sigma):
+def _run_one_gas(cube, mission, gas, p, n, psave, site, sigma, wind_source='geos', era5_file=None,
+                 wind_value=None, wind_from=None):
     show_b, quan_b = GAS_BANDS[gas]
     dxgas_show = cube[:, :, show_b]
     dxgas_quan = cube[:, :, quan_b]
@@ -42,7 +43,7 @@ def _run_one_gas(cube, mission, gas, p, n, psave, site, sigma):
 
     if gas == 'nh3':
         Q_1, err_Q_1, Q_2, err_Q_2, u10, err_u10, lat_s, lon_s, ts, bool_det = emission_quantification_auto(
-            dxgas_show, dxgas_quan, rad_ref, mission, gas, p, n, psave, sigma)
+            dxgas_show, dxgas_quan, rad_ref, mission, gas, p, n, psave, sigma, wind_source, era5_file, wind_value, wind_from)
         if bool_det:
             fields = ['Site', 'Mission', 'Timestamp\nYYYYMMDDhhmmss', 'Source-lat(º)', 'Source-lon(º)',
                       'u10 (m/s)', 'err(u10)', 'Q_tau=inf (kg/h)', 'err(Q_tau=inf)', 'Q_tau=1h (kg/h)', 'err(Q_tau=1h)']
@@ -51,7 +52,7 @@ def _run_one_gas(cube, mission, gas, p, n, psave, site, sigma):
             excel_info(fields, info, psave, gas)
     else:
         Q, err_Q, u10, err_u10, lat_s, lon_s, ts, bool_det = emission_quantification_auto(
-            dxgas_show, dxgas_quan, rad_ref, mission, gas, p, n, psave, sigma)
+            dxgas_show, dxgas_quan, rad_ref, mission, gas, p, n, psave, sigma, wind_source, era5_file, wind_value, wind_from)
         if bool_det:
             fields = ['Site', 'Mission', 'Timestamp\nYYYYMMDDhhmmss', 'Source-lat(º)', 'Source-lon(º)',
                       'u10 (m/s)', 'err(u10)', 'Q (kg/h)', 'err(Q)']
@@ -60,11 +61,12 @@ def _run_one_gas(cube, mission, gas, p, n, psave, site, sigma):
             excel_info(fields, info, psave, gas)
 
 
-def run_gases(p, n, psave, gases, site, sigma=2.0):
+def run_gases(p, n, psave, gases, site, sigma=2.0, wind_source='geos', era5_file=None,
+              wind_value=None, wind_from=None):
     cube, mission = deltax_rets(p, n, psave)  # retrieval (or reload from disk) — once for all gases
     for gas in gases:
         print(f'\n===================  {gas.upper()}  ===================')
-        _run_one_gas(cube, mission, gas, p, n, psave, site, sigma)
+        _run_one_gas(cube, mission, gas, p, n, psave, site, sigma, wind_source, era5_file, wind_value, wind_from)
 
 
 if __name__ == '__main__':
@@ -77,6 +79,10 @@ if __name__ == '__main__':
     ap.add_argument('-o', '--output-dir', default=None, help='Folder for L2/L4 outputs. Default: an "output" subfolder next to the RAD file.')
     ap.add_argument('-s', '--site', default='site', help='Site name, only labels the output csv rows.')
     ap.add_argument('--sigma', type=float, default=2.0, help='Initial sigma multiplier for the plume threshold (adjustable interactively).')
+    ap.add_argument('--wind', choices=['geos', 'era5'], default='geos', help='Wind source to quantify with. Both are printed for comparison if --era5-file is given.')
+    ap.add_argument('--era5-file', default=None, help='Path to a local ERA5 .nc (u10/v10) to enable the ERA5 wind (needed for --wind era5).')
+    ap.add_argument('--wind-value', type=float, default=None, help='Manual wind speed (m/s) override for THIS run only (e.g. 1.1 to match a reference). GEOS/ERA5 still printed for comparison.')
+    ap.add_argument('--wind-from', type=float, default=None, help='Optional wind FROM-direction (met. degrees) for the manual override, only affects the map arrow.')
     args = ap.parse_args()
 
     gases = [g.strip().lower() for g in args.gas.split(',') if g.strip()]
@@ -89,4 +95,6 @@ if __name__ == '__main__':
     psave = args.output_dir if args.output_dir else os.path.join(path_img, 'output') + '/'
     os.makedirs(psave, exist_ok=True)
 
-    run_gases(path_img, name_img, psave, gases, args.site, sigma=args.sigma)
+    run_gases(path_img, name_img, psave, gases, args.site, sigma=args.sigma,
+              wind_source=args.wind, era5_file=args.era5_file,
+              wind_value=args.wind_value, wind_from=args.wind_from)

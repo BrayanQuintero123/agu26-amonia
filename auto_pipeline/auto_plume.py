@@ -36,10 +36,55 @@ from skimage import measure
 from georreferencing import (location_and_time, georreference, gcp_from_placemark,
                              warp_array_for_display, warped_pixel_to_lonlat, lonlat_to_native_pixel)
 from quant_func_v2 import extract_Q  # IME quantification core, untouched
-#---- new wind (bilinear) ----
+#---- new wind (bilinear GEOS-FP) ----
 from wind_bilinear import wind_speed_bilinear
 #---- wavelet anomaly (den) for display + geometry only ----
 from wavelet_den import compute_den
+
+
+def _resolve_wind(ts, lat_s, lon_s, path_folder, psave, name, wind_source='geos', era5_file=None,
+                  wind_value=None, wind_from=None):
+    """Compute GEOS-FP wind (always) and ERA5 (if requested/available), print both for comparison,
+    and return (u10, u, v) for whichever `wind_source` selects. A manual `wind_value` (m/s) overrides
+    everything (with optional `wind_from`, met. degrees, for the map arrow) -- for a single case, via a flag.
+    Falls back to GEOS-FP on any ERA5 error."""
+    u10_g = wind_speed_bilinear(ts, lat_s, lon_s, path_folder, psave, name)
+    g = np.load(psave + name + '_u_arr_bilinear.npy')
+    ug, vg = float(g[1]), float(g[2])
+    chosen = ('GEOS-FP', u10_g, ug, vg)
+
+    #auto-download ERA5 (and cache it) if it's requested and no file was given
+    if era5_file is None and wind_source == 'era5':
+        try:
+            from wind_era5 import ensure_era5_file
+            era5_file = ensure_era5_file(ts, lat_s, lon_s, psave, name)
+        except Exception as e:
+            print('  [wind] auto-descarga de ERA5 fallo (%s); revisa tu ~/.cdsapirc' % e)
+
+    if era5_file:
+        try:
+            from wind_era5 import wind_speed_era5
+            u10_e, ue, ve = wind_speed_era5(ts, lat_s, lon_s, era5_file, psave, name)
+            print('  [wind] comparacion:  GEOS-FP = %.2f m/s   |   ERA5 = %.2f m/s' % (u10_g, u10_e))
+            if wind_source == 'era5':
+                chosen = ('ERA5', u10_e, ue, ve)
+        except Exception as e:
+            print('  [wind] ERA5 no disponible (%s); uso GEOS-FP' % e)
+
+    #manual override (single case): forces the speed used for Q; direction only affects the map arrow
+    if wind_value is not None:
+        if wind_from is not None:
+            fr = np.radians(wind_from)                 # met. convention: FROM which the wind blows
+            uu, vv = -wind_value * np.sin(fr), -wind_value * np.cos(fr)
+        else:
+            cmag = np.hypot(chosen[2], chosen[3]) or 1.0   # keep the chosen model's direction, override magnitude
+            uu, vv = chosen[2] / cmag * wind_value, chosen[3] / cmag * wind_value
+        chosen = ('MANUAL', float(wind_value), uu, vv)
+        extra = (' desde %.0f deg' % wind_from) if wind_from is not None else ' (direccion del modelo)'
+        print('  [wind] OVERRIDE manual = %.2f m/s%s' % (wind_value, extra))
+
+    print('  [wind] cuantificando con %s = %.2f m/s' % (chosen[0], chosen[1]))
+    return chosen[1], chosen[2], chosen[3]
 
 DEFAULT_SIGMA_MULT = 2.0   # >2*sigma, consistent with masking_plumes / Roger et al. 2025
 DEFAULT_AREA_MIN = 10      # minimum plume size in pixels (informational)
@@ -233,19 +278,20 @@ def select_plume_auto(plot_xch4, ref_rad, mission, gas, lat, lon, list_gcp,
     return mask, bool_det, source_coord, k
 
 
-def _safe_render_map(mask, gas_enh, ref_rad, lat, lon, list_gcp, lat_s, lon_s, gas, psave, name, sigma_used):
+def _safe_render_map(mask, gas_enh, ref_rad, lat, lon, list_gcp, lat_s, lon_s, gas, psave, name, sigma_used, wind_uv=None):
     #Auto-generate the plume-on-basemap PNG right after acceptance (no double work, correct path).
     #Lazy import breaks the auto_plume <-> plot_plume_map cycle; try/except so a map failure never
     #loses the already-computed Q.
     try:
         from plot_plume_map import render_plume_map
-        render_plume_map(mask, gas_enh, ref_rad, lat, lon, list_gcp, lat_s, lon_s, gas, psave, name, sigma=sigma_used)
+        render_plume_map(mask, gas_enh, ref_rad, lat, lon, list_gcp, lat_s, lon_s, gas, psave, name, sigma=sigma_used, wind_uv=wind_uv)
     except Exception as e:
         print(f'  [map] could not render plume map ({e}); the Q result is unaffected.')
 
 
 def emission_quantification_auto(dxgas_show, dxgas_quan, ref_rad, mission, gas, path_folder, name, psave,
-                                 sigma_mult=DEFAULT_SIGMA_MULT):
+                                 sigma_mult=DEFAULT_SIGMA_MULT, wind_source='geos', era5_file=None,
+                                 wind_value=None, wind_from=None):
     """Copy of quant_func_v2.emission_quantification, but using select_plume_auto (semi-automatic
     delineation) and wind_speed_bilinear (bilinear GEOS-FP). extract_Q / ppmm_to_kg / georreference
     / Ueff are the ORIGINAL LARS functions, reused unchanged. On acceptance it also auto-renders the
@@ -261,9 +307,9 @@ def emission_quantification_auto(dxgas_show, dxgas_quan, ref_rad, mission, gas, 
             lat_s, lon_s = georreference(path_folder, name, psave, name + '_tool4', gas, mask, source_coord)
             if mission in ('EMIT', 'PRISMA', 'AVIRIS-NG'):
                 lat_s, lon_s = lat[source_coord[1], source_coord[0]], lon[source_coord[1], source_coord[0]]
-            u10 = wind_speed_bilinear(ts, lat_s, lon_s, path_folder, psave, name)
+            u10, wu, wv = _resolve_wind(ts, lat_s, lon_s, path_folder, psave, name, wind_source, era5_file, wind_value, wind_from)
             Q, err_Q, u10, err_u10 = extract_Q(dxgas_quan, mask, u10, mission, gas)
-            _safe_render_map(mask, dxgas_show, ref_rad, lat, lon, list_gcp, lat_s, lon_s, gas, psave, name, sigma_used)
+            _safe_render_map(mask, dxgas_show, ref_rad, lat, lon, list_gcp, lat_s, lon_s, gas, psave, name, sigma_used, wind_uv=(u10, wu, wv))
         else:
             Q, err_Q, u10, err_u10, lat_s, lon_s = None, None, None, None, None, None
             print('No detection')
@@ -274,9 +320,9 @@ def emission_quantification_auto(dxgas_show, dxgas_quan, ref_rad, mission, gas, 
             lat_s, lon_s = georreference(path_folder, name, psave, name + '_tool4', gas, mask, source_coord)
             if mission in ('EMIT', 'PRISMA', 'AVIRIS-NG'):
                 lat_s, lon_s = lat[source_coord[1], source_coord[0]], lon[source_coord[1], source_coord[0]]
-            u10 = wind_speed_bilinear(ts, lat_s, lon_s, path_folder, psave, name)
+            u10, wu, wv = _resolve_wind(ts, lat_s, lon_s, path_folder, psave, name, wind_source, era5_file, wind_value, wind_from)
             Q_1, err_Q_1, Q_2, err_Q_2, u10, err_u10 = extract_Q(dxgas_quan, mask, u10, mission, gas)
-            _safe_render_map(mask, dxgas_show, ref_rad, lat, lon, list_gcp, lat_s, lon_s, gas, psave, name, sigma_used)
+            _safe_render_map(mask, dxgas_show, ref_rad, lat, lon, list_gcp, lat_s, lon_s, gas, psave, name, sigma_used, wind_uv=(u10, wu, wv))
         else:
             Q_1, err_Q_1, Q_2, err_Q_2, u10, err_u10, lat_s, lon_s = None, None, None, None, None, None, None, None
             print('No detection')
