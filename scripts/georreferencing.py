@@ -20,6 +20,7 @@ from EMIT_reader import EMIT_loc_time_gcps
 from PRISMA_reader import PRISMA_loc_time_gcps
 from GF_reader import GF_loc_time_gcps
 from AVIRIS_NG_reader import AVNG_loc_time_gcps
+from Tanager_reader import Tanager_loc_time_gcps
 
 
 ##### Georreferencing and plume source location
@@ -36,7 +37,9 @@ def location_and_time(path_folder, name, mission): #Used to create GCPs to georr
         time, lat_c, lon_c, lat, lon = EMIT_loc_time_gcps(path_folder, name)
     elif mission == 'AVIRIS-NG':
         time, lat_c, lon_c, lat, lon = AVNG_loc_time_gcps(path_folder, name)
-        
+    elif mission == 'Tanager':
+        time, lat_c, lon_c, lat, lon = Tanager_loc_time_gcps(path_folder, name)
+
     return time, lat_c, lon_c, lat, lon
 
 def gcp_from_placemark(placemark_full_path): #Extract GCPs from image, which will later be used to georreference the images

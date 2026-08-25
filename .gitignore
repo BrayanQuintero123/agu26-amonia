@@ -4,6 +4,12 @@
 output/
 *.npy
 
+# Tanager data + outputs (the .h5 are 580-682 MB each)
+*.h5
+*.tif
+TanagerScene*/
+out_tanager/
+
 # Python
 __pycache__/
 *.pyc

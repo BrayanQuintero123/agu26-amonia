@@ -14,8 +14,10 @@ Gases cuantificables (tienen calibracion Ueff + masa molar): ch4, co2, c2h4, c2h
 (h2o NO se cuantifica: es vapor de agua, se usa de otra forma.)
 
 Uso:
-  python auto_pipeline/pipeline_auto.py "<RAD.nc>" --gas ch4
-  python auto_pipeline/pipeline_auto.py "<RAD.nc>" --gas ch4,nh3,c2h4 -s "El Carrasco" --sigma 2.0
+  python auto_pipeline/pipeline_auto.py "<RAD.nc>"  --gas ch4                          # EMIT (auto-detectado)
+  python auto_pipeline/pipeline_auto.py "<RAD.h5>"  --gas ch4 --mission Tanager        # Tanager
+  python auto_pipeline/pipeline_auto.py "<RAD.nc>"  --gas ch4 --wind era5              # con ERA5
+  python auto_pipeline/pipeline_auto.py "<RAD.nc>"  --gas ch4,nh3,c2h4 -s "Carrasco"
 """
 
 import os
@@ -62,8 +64,8 @@ def _run_one_gas(cube, mission, gas, p, n, psave, site, sigma, wind_source='geos
 
 
 def run_gases(p, n, psave, gases, site, sigma=2.0, wind_source='geos', era5_file=None,
-              wind_value=None, wind_from=None):
-    cube, mission = deltax_rets(p, n, psave)  # retrieval (or reload from disk) — once for all gases
+              wind_value=None, wind_from=None, mission=None):
+    cube, mission = deltax_rets(p, n, psave, mission=mission)
     for gas in gases:
         print(f'\n===================  {gas.upper()}  ===================')
         _run_one_gas(cube, mission, gas, p, n, psave, site, sigma, wind_source, era5_file, wind_value, wind_from)
@@ -73,17 +75,35 @@ if __name__ == '__main__':
 
     ap = argparse.ArgumentParser(
         description='Semi-automatic plume delineation + IME quantification for one or several gases.')
-    ap.add_argument('rad_file', help='Full path to the EMIT L1B RAD .nc (its matching OBS .nc must be in the same folder).')
+    ap.add_argument('rad_file', help='Ruta al archivo de radiancia: .nc para EMIT/EnMAP/PRISMA, .h5 para Tanager.')
     ap.add_argument('--gas', default='ch4',
                     help='Gas or comma-separated list. Options: ch4, co2, c2h4, c2h2, nh3. Example: --gas ch4,nh3')
     ap.add_argument('-o', '--output-dir', default=None, help='Folder for L2/L4 outputs. Default: an "output" subfolder next to the RAD file.')
     ap.add_argument('-s', '--site', default='site', help='Site name, only labels the output csv rows.')
     ap.add_argument('--sigma', type=float, default=2.0, help='Initial sigma multiplier for the plume threshold (adjustable interactively).')
     ap.add_argument('--wind', choices=['geos', 'era5'], default='geos', help='Wind source to quantify with. Both are printed for comparison if --era5-file is given.')
-    ap.add_argument('--era5-file', default=None, help='Path to a local ERA5 .nc (u10/v10) to enable the ERA5 wind (needed for --wind era5).')
+    ap.add_argument('--era5', action='store_true', help='Shorthand for --wind era5. Searches for an ERA5 .nc in the same folder as the input file.')
+    ap.add_argument('--era5-file', default=None, help='Path to a local ERA5 .nc (u10/v10). Required if --wind era5 and not using --era5 auto-search.')
     ap.add_argument('--wind-value', type=float, default=None, help='Manual wind speed (m/s) override for THIS run only (e.g. 1.1 to match a reference). GEOS/ERA5 still printed for comparison.')
     ap.add_argument('--wind-from', type=float, default=None, help='Optional wind FROM-direction (met. degrees) for the manual override, only affects the map arrow.')
+    ap.add_argument('--mission', default=None,
+                    choices=['EMIT', 'Tanager', 'EnMAP', 'PRISMA', 'GF5', 'AVIRIS-NG'],
+                    help='Mision/satelite. Si no se da, se auto-detecta del nombre del archivo.')
     args = ap.parse_args()
+
+    # --era5 flag: shorthand for --wind era5, auto-finds the ERA5 file next to the input
+    if args.era5:
+        args.wind = 'era5'
+        if args.era5_file is None:
+            import glob
+            input_dir = os.path.dirname(os.path.abspath(args.rad_file))
+            candidates = glob.glob(os.path.join(input_dir, '*.nc')) + glob.glob(os.path.join(input_dir, '*era5*.nc4'))
+            era5_candidates = [f for f in candidates if 'era5' in os.path.basename(f).lower()]
+            if era5_candidates:
+                args.era5_file = era5_candidates[0]
+                print(f'[ERA5] Auto-detected: {args.era5_file}')
+            else:
+                raise SystemExit('--era5: no ERA5 .nc found next to the input file. Use --era5-file <path>.')
 
     gases = [g.strip().lower() for g in args.gas.split(',') if g.strip()]
     invalid = [g for g in gases if g not in GAS_BANDS]
@@ -97,4 +117,5 @@ if __name__ == '__main__':
 
     run_gases(path_img, name_img, psave, gases, args.site, sigma=args.sigma,
               wind_source=args.wind, era5_file=args.era5_file,
-              wind_value=args.wind_value, wind_from=args.wind_from)
+              wind_value=args.wind_value, wind_from=args.wind_from,
+              mission=args.mission)
