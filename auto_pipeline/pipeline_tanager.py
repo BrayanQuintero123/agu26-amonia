@@ -8,6 +8,10 @@ Uso:
   python auto_pipeline/pipeline_tanager.py "<.h5>" --gas ch4 --wind era5 --era5-file "<.nc>"
   python auto_pipeline/pipeline_tanager.py "<.h5>" --gas nh3 --wind-value 3.5 -s "Deir ez-Zor"
 
+Modo AUTOMATICO (sin clics), sembrando desde el asset ql_ch4_json de la escena:
+  python auto_pipeline/pipeline_tanager.py "<.h5>" --gas ch4 --auto-json
+  python auto_pipeline/pipeline_tanager.py "<.h5>" --gas ch4 --auto-json --wind json --quality good
+
 El archivo .h5 puede ser ortho_radiance_hdf5 o basic_radiance_hdf5; se auto-detecta.
 Si el MF ya fue calculado (existe mf_<gas>.npy en --output-dir), se carga directamente.
 
@@ -195,6 +199,116 @@ def quantify_plume(data, mask, geo, gas, ts, lon_s, lat_s, label,
         return dict(label=label, IME=IME, L=L, u10=u10, Q=Q, err_Q=err_Q, N_pix=N_pix, lat=lat_s, lon=lon_s)
 
 # ------------------------------------------------------------------
+# Modo automatico: plumas sembradas desde el GeoJSON oficial
+# ------------------------------------------------------------------
+
+def save_overview_png(ret, plumes, extent, epsg, gas, psave, vmax):
+    """Una sola figura con el MF y todas las mascaras/fuentes etiquetadas."""
+    try:
+        fig, ax = plt.subplots(figsize=(11, 12), facecolor='black')
+        ax.set_facecolor('black')
+        im = ax.imshow(ret, extent=extent, cmap='inferno', vmin=0, vmax=vmax, origin='upper')
+        for pl in plumes:
+            ax.contour(pl['mask'], levels=[0.5], colors='cyan', linewidths=0.8,
+                       extent=extent, origin='upper')
+            x = extent[0] + (pl['col'] + 0.5) * (extent[1] - extent[0]) / ret.shape[1]
+            y = extent[3] - (pl['row'] + 0.5) * (extent[3] - extent[2]) / ret.shape[0]
+            ax.scatter(x, y, s=90, facecolor='none', edgecolor='white', linewidth=1.2, marker='o')
+            ax.text(x, y, '  ' + pl['label'], color='yellow', fontsize=9)
+        cb = plt.colorbar(im, ax=ax, shrink=0.75,
+                          label=rf'$\Delta$X{gas.upper()} (ppm$\cdot$m)')
+        cb.ax.yaxis.label.set_color('white'); cb.ax.tick_params(colors='white')
+        ax.tick_params(colors='white')
+        ax.set_xlabel(f'Easting (m, EPSG:{epsg})', color='white')
+        ax.set_ylabel('Northing (m)', color='white')
+        ax.set_title(f'{len(plumes)} plumas sembradas desde ql_ch4_json', color='white')
+        plt.tight_layout()
+        out = os.path.join(psave, f'plumes_auto_{gas}.png')
+        fig.savefig(out, dpi=130, facecolor='black')
+        plt.close(fig)
+        print(f'\n[mapa] {out}')
+    except Exception as e:
+        print(f'\n[mapa] no se pudo generar el overview ({e}); los resultados no se ven afectados.')
+
+
+def run_auto(ret, geo, gas, ts, psave, args):
+    """Siembra desde el ql_ch4_json, crece cada mascara y cuantifica todas las plumas."""
+    from plumes_from_json import find_plumes_json, read_plumes_json, seed_masks
+
+    json_file = args.plumes_json or find_plumes_json(args.rad_file)
+    if not json_file or not os.path.exists(json_file):
+        sys.exit('--auto-json: no encontre el *_ql_ch4_json.geojson junto al .h5. '
+                 'Pasalo con --plumes-json <archivo>.')
+    print(f'[auto] plumas sembradas desde: {os.path.basename(json_file)}')
+
+    plumes_json = read_plumes_json(json_file, gas)
+    print(f'[auto] {len(plumes_json)} pluma(s) en el GeoJSON')
+
+    qualities = set(q.strip() for q in args.quality.split(',')) if args.quality else None
+    ladder = tuple([args.sigma] + [k for k in (1.5, 1.0, 0.75, 0.5) if k < args.sigma])
+
+    gt, epsg = geo['geotransform'], geo['epsg_code']
+    kept, skipped = seed_masks(ret, plumes_json, gt, epsg,
+                               sigma_ladder=ladder, min_pix=args.min_pix,
+                               qualities=qualities)
+
+    for pl in skipped:
+        print(f"  [-] {pl['label']:<3} ({pl['quality']:<12}) descartada: {pl['status']}")
+    if not kept:
+        print('\nNinguna pluma pudo delinearse.')
+        return
+
+    print(f'\n{"="*60}')
+    print(f'Cuantificando {len(kept)} pluma(s) - gas: {gas.upper()}')
+    print(f'{"="*60}')
+
+    results = []
+    for pl in kept:
+        # --wind json: usamos el MISMO viento que reporta el producto oficial, para
+        # comparar metodo contra metodo y no metodo+viento contra metodo+viento.
+        if args.wind == 'json':
+            wind_value, wind_from = pl['u10_official'], pl['wind_from_official']
+            if wind_value is None:
+                print(f"  [{pl['label']}] el GeoJSON no trae viento; uso --wind-value/geos")
+                wind_value, wind_from = args.wind_value, args.wind_from
+            wind_source = 'geos'
+        else:
+            wind_value, wind_from, wind_source = args.wind_value, args.wind_from, args.wind
+
+        print(f"\n--- {pl['label']}  ({pl['quality']}, sigma={pl['sigma']:.2f}, {pl['n_pix']} px) ---")
+        res = quantify_plume(ret, pl['mask'], geo, gas, ts, pl['lon'], pl['lat'],
+                             pl['label'], psave, args.site, wind_source,
+                             args.era5_file, wind_value, wind_from)
+        res.update(quality=pl['quality'], sigma=pl['sigma'],
+                   q_official=pl['q_official'], ime_official=pl['ime_official'])
+        results.append(res)
+
+    save_overview_png(ret, kept, [gt[0], gt[0] + geo['cols']*gt[1],
+                                  gt[3] + geo['rows']*gt[5], gt[3]],
+                      epsg, gas, psave, float(np.percentile(ret[np.isfinite(ret)], 99.5)))
+
+    # --- Tabla resumen + comparacion contra el producto oficial ---
+    print(f'\n{"="*94}')
+    print(f'{"P":<4} {"qual":<12} {"lat":>9} {"lon":>10} {"N":>5} {"IME":>8} {"L(m)":>7} '
+          f'{"u10":>5} {"Q(kg/h)":>9} {"Qofic":>9} {"diff":>7}')
+    print('-' * 94)
+    tot_q = tot_o = 0.0
+    for r in results:
+        qo = r.get('q_official')
+        diff = f'{100*(r["Q"]-qo)/qo:+.0f}%' if qo else '   -'
+        tot_q += r['Q']; tot_o += qo or 0.0
+        print(f'{r["label"]:<4} {r["quality"]:<12} {r["lat"]:>9.5f} {r["lon"]:>10.5f} '
+              f'{r["N_pix"]:>5} {r["IME"]:>8.1f} {r["L"]:>7.0f} {r["u10"]:>5.2f} '
+              f'{r["Q"]:>9.1f} {(qo if qo else 0):>9.1f} {diff:>7}')
+    print('=' * 94)
+    if tot_o:
+        print(f'Total Q = {tot_q:.1f} kg/h {gas.upper()}   |   total oficial = {tot_o:.1f} kg/h '
+              f'({100*(tot_q-tot_o)/tot_o:+.0f}%)')
+    else:
+        print(f'Total Q = {tot_q:.1f} kg/h {gas.upper()}')
+
+
+# ------------------------------------------------------------------
 # Seleccion interactiva de una pluma
 # ------------------------------------------------------------------
 
@@ -268,14 +382,24 @@ def main():
                     help='Carpeta de salida. Por defecto: "output/" junto al .h5.')
     ap.add_argument('-s', '--site', default='site',
                     help='Nombre del sitio (etiqueta el CSV).')
-    ap.add_argument('--wind', choices=['geos', 'era5'], default='geos',
-                    help='Fuente de viento.')
+    ap.add_argument('--wind', choices=['geos', 'era5', 'json'], default='geos',
+                    help='Fuente de viento. "json" usa wind_speed_avg del ql_ch4_json (solo con --auto-json).')
     ap.add_argument('--era5-file', default=None,
                     help='Ruta al .nc ERA5 (u10/v10) si --wind era5.')
     ap.add_argument('--wind-value', type=float, default=None,
                     help='Velocidad de viento manual en m/s (anula geos/era5).')
     ap.add_argument('--wind-from', type=float, default=None,
                     help='Direccion del viento (grados met.) para el override manual.')
+    ap.add_argument('--auto-json', action='store_true',
+                    help='Modo automatico: siembra las plumas desde el asset ql_ch4_json y las cuantifica todas, sin clics.')
+    ap.add_argument('--plumes-json', default=None,
+                    help='Ruta al *_ql_ch4_json.geojson. Por defecto se busca junto al .h5.')
+    ap.add_argument('--quality', default=None,
+                    help='Filtra por plume_quality del GeoJSON, p.ej. "good" o "good,questionable". Por defecto: todas.')
+    ap.add_argument('--sigma', type=float, default=2.0,
+                    help='Umbral inicial (k*sigma) para crecer la mascara en modo automatico. Solo baja si la fuente no lo supera.')
+    ap.add_argument('--min-pix', type=int, default=5,
+                    help='Tamano minimo de mascara (px) para aceptar una pluma en modo automatico.')
     args = ap.parse_args()
 
     gas = args.gas.strip().lower()
@@ -294,6 +418,14 @@ def main():
 
     # --- MF ---
     ret, geo = run_or_load_mf(p, n, gas, psave)
+
+    if args.auto_json:
+        run_auto(ret, geo, gas, ts, psave, args)
+        return
+
+    if args.wind == 'json':
+        sys.exit('--wind json solo tiene sentido con --auto-json (el viento viene del GeoJSON).')
+
     gt, epsg = geo['geotransform'], geo['epsg_code']
     extent = [gt[0], gt[0] + geo['cols']*gt[1],
               gt[3] + geo['rows']*gt[5], gt[3]]

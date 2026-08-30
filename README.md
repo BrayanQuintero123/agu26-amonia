@@ -72,6 +72,55 @@ Qué hace:
 Ajustes: `--pctl 99.9` (más estricto), `--n-sigma 3`, `--min-dist 1500`, `--top 15`,
 `--sigma 2.0`, `--wind-value 3.2` (evita la descarga de GEOS-FP).
 
+### Comparación de matched filters (Tanager)
+
+El repo trae dos retrievals que comparten el mismo target `t = mu · k` (con `k` de la LUT
+de libRadtran), así que sus salidas están en ppm·m y son directamente comparables. Lo único
+que cambia es cómo se estima el **fondo**:
+
+| | Fondo |
+|---|---|
+| **LARS** (`Retrieval_methods.AT_MF`) | una covarianza por columna, `pinv`, sin regularizar |
+| **ADV** (`scripts/mf_advanced.py`) | columnas agrupadas (10–30) según el perfil de striping; dentro de cada grupo PCA(3) + k-means, una covarianza por clúster con shrinkage |
+
+Punto de entrada único, que elige solo el camino según lo que traiga cada escena:
+
+```bash
+python auto_pipeline/quantify_tanager.py tanager/*_ortho_radiance_hdf5.h5
+python auto_pipeline/quantify_tanager.py tanager/*.h5 --dry-run      # solo dice qué haría
+```
+
+- **Con GT** (existe `<scene>_ql_ch4_json.geojson` *con* features) → `compare_mf.py`.
+  Las plumas se siembran del GeoJSON (fuente, viento y emisión oficiales), la máscara sale
+  de la huella del quicklook oficial y se cuantifica con los dos MF. Sin clics.
+- **Sin GT** (no hay GeoJSON, o viene vacío) → `pick_plumes_wavelet.py`.
+  Se corren los dos MF, se proponen candidatos de la **unión** de ambos sobre el mapa
+  wavelet, cada uno con su link de Google Maps, y el operador elige con un clic.
+
+Forzable con `--mode gt` / `--mode pick`.
+
+### Convención de cuantificación
+
+`Q = IME · 3600 · Ueff / L`. Despejando esa fórmula sobre las 20 plumas con GT de Carbon
+Mapper sale, exacto y sin excepción, **`Ueff = u10`** y **`L = fetch`**. La parametrización
+original del repo (`Ueff = a·u10 + b`, Guanter et al. 2021 / Roger et al. 2024) da 1.8–2.4×
+menos a esos vientos, y ese factor explicaba casi todo el hueco que se veía contra el
+producto oficial — no era el retrieval.
+
+Por eso el default ahora es la convención de Carbon Mapper:
+
+| Flag | Opciones | Default |
+|---|---|---|
+| `--ueff-mode` | `cm` (Ueff = u10) · `lars` (a·u10 + b) | `cm` |
+| `--l-mode` | `sqrt-area` · `fetch` · `hull` | `sqrt-area` |
+
+`sqrt-area` = `sqrt(N·gsd²)`, que es lo que ya usaba `extract_Q`, y contrastado contra el
+`fetch` oficial de las 20 plumas da mediana **0.92** (el convex hull da 1.73 y se dispara
+hasta 5× en plumas alargadas, así que no es comparable con el producto oficial).
+
+`--per-plume` da una fila por pluma del GeoJSON; cuando varias comparten huella conexa, la
+huella se reparte por fuente más cercana.
+
 ## Nota sobre Tanager
 
 `Tanager_reader.py` auto-detecta el tipo de producto:
