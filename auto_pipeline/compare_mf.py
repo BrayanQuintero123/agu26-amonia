@@ -235,11 +235,70 @@ def quantify(enh, mask, u10, gas, ueff_mode='cm', l_mode='sqrt-area', fetch=None
                 mean_enh=float(np.nanmean(inside)) if inside.size else 0.0)
 
 
+def grow_mask_ksigma(enh, sources, sigma_mult):
+    """Mascara crecida desde la(s) fuente(s) con el criterio del repo: mediana 3x3,
+    umbral k*sigma, componentes conexas, y se conserva la isla que contiene cada
+    fuente. Es lo que hace grow_plume_from_source en auto_plume.py."""
+    from scipy.signal import medfilt2d
+    filt = medfilt2d(np.nan_to_num(np.asarray(enh, dtype=np.float32)), kernel_size=3)
+    std = float(np.nanstd(enh))
+    labels = measure.label((filt > sigma_mult * std) & (filt < 1e5), connectivity=1)
+    out = np.zeros(enh.shape, dtype=bool)
+    for r, c in sources:
+        lb = labels[r, c]
+        if lb == 0:                       # la fuente no supera el umbral: se busca al lado
+            r0, r1 = max(r - 3, 0), min(r + 4, labels.shape[0])
+            c0, c1 = max(c - 3, 0), min(c + 4, labels.shape[1])
+            win = labels[r0:r1, c0:c1]
+            vals = win[win > 0]
+            if vals.size == 0:
+                continue
+            lb = int(np.bincount(vals).argmax())
+        out |= (labels == lb)
+    return out if out.any() else None
+
+
+def _row(scene, mem, mask_l, mask_a, ret_lars, ret_adv, gas, ueff_mode, l_mode, was_split):
+    """Una fila de resultados. mask_l y mask_a son la misma con mask_mode=footprint
+    (aisla el retrieval) y distintas con mask_mode=grow (cada MF se delinea solo)."""
+    u10 = float(np.mean([m['u10_official'] for m in mem]))
+    wdir = float(np.mean([m['wind_from_official'] for m in mem
+                          if m['wind_from_official'] is not None] or [np.nan]))
+    q_off = sum(m['q_official'] for m in mem)
+    ime_off = sum(m['ime_official'] for m in mem)
+    #Cuando varias plumas comparten huella, la L que las cubre a todas es la mayor de sus fetch.
+    fetch = max([m['fetch_official'] for m in mem if m['fetch_official']] or [0]) or None
+
+    r_l = quantify(ret_lars, mask_l, u10, gas, ueff_mode, l_mode, fetch)
+    r_a = quantify(ret_adv, mask_a, u10, gas, ueff_mode, l_mode, fetch)
+
+    return dict(scene=scene, plumes='+'.join(m['label'] for m in mem),
+                quality=','.join(sorted({m['quality'] for m in mem})),
+                plume_id=';'.join(m['plume_id'] for m in mem),
+                datetime=mem[0]['datetime'],
+                lat=round(float(np.mean([m['lat'] for m in mem])), 6),
+                lon=round(float(np.mean([m['lon'] for m in mem])), 6),
+                shared_footprint=was_split,
+                n_pix=int(mask_l.sum()), n_pix_adv=int(mask_a.sum()),
+                u10=u10, wind_dir=wdir, wind_source=mem[0]['wind_source_official'],
+                ueff=r_l['ueff'], ueff_mode=ueff_mode,
+                L=r_l['L'], L_adv=r_a['L'], l_mode=l_mode, fetch_off=fetch,
+                ime_off=ime_off, q_off=q_off,
+                ime_lars=r_l['IME'], q_lars=r_l['Q'], err_lars=r_l['err_Q'],
+                mean_lars=r_l['mean_enh'],
+                ime_adv=r_a['IME'], q_adv=r_a['Q'], err_adv=r_a['err_Q'],
+                mean_adv=r_a['mean_enh'],
+                q_lars_over_off=(r_l['Q'] / q_off if q_off else None),
+                q_adv_over_off=(r_a['Q'] / q_off if q_off else None),
+                q_adv_over_lars=(r_a['Q'] / r_l['Q'] if r_l['Q'] else None))
+
+
 # ------------------------------------------------------------------
 # Una escena
 # ------------------------------------------------------------------
 
-def process_scene(rad_file, gas, psave, adv_kwargs, force=False, ueff_mode='cm', l_mode='sqrt-area', per_plume=False):
+def process_scene(rad_file, gas, psave, adv_kwargs, force=False, ueff_mode='cm', l_mode='sqrt-area',
+                  per_plume=False, mask_mode='footprint', sigma=2.0):
     p = os.path.dirname(os.path.abspath(rad_file)) + os.sep
     n = os.path.splitext(os.path.basename(rad_file))[0]
     scene = n.split('_ortho_')[0]
@@ -312,6 +371,27 @@ def process_scene(rad_file, gas, psave, adv_kwargs, force=False, ueff_mode='cm',
     rows_out = []
     for cid, members in sorted(groups.items()):
         comp = (lab == cid)
+        #mask_mode='grow': cada MF se delinea SOLO, con el umbral k*sigma desde la
+        #fuente del GeoJSON, que es lo que se haria en produccion. Comparado contra
+        #el GT esto mide pipeline completo contra pipeline completo. La huella del
+        #quicklook sirve para aislar el retrieval (los dos MF sobre la MISMA mascara),
+        #pero NO para medir exactitud contra el oficial: es un uint8 estirado y su
+        #area no nula no es la mascara con la que ellos calcularon su IME.
+        if mask_mode == 'grow':
+            src = [source_pixel(m['lon'], m['lat'], gt, epsg, shape) for m in members]
+            src = [s for s in src if s]
+            if not src:
+                continue
+            gl = grow_mask_ksigma(ret_lars, src, sigma)
+            ga = grow_mask_ksigma(ret_adv, src, sigma)
+            if gl is None or ga is None:
+                print(f"  [-] {'+'.join(m['label'] for m in members)}: no crece a {sigma}sigma en un MF")
+                continue
+            parts_masks = [(members, gl, ga, False)]
+            for mem, m_l, m_a, sp in parts_masks:
+                rows_out.append(_row(scene, mem, m_l, m_a, ret_lars, ret_adv, gas,
+                                     ueff_mode, l_mode, sp))
+            continue
         #Varias plumas del GeoJSON pueden caer en la MISMA huella conexa. Con
         #--per-plume la huella se reparte por fuente mas cercana (Voronoi sobre
         #los pixeles de la componente), asi cada pluma oficial recibe su propia
@@ -334,38 +414,8 @@ def process_scene(rad_file, gas, psave, adv_kwargs, force=False, ueff_mode='cm',
         for mem, mask, was_split in parts:
             if not mask.any():
                 continue
-            labels = '+'.join(m['label'] for m in mem)
-            u10 = float(np.mean([m['u10_official'] for m in mem]))
-            wdir = float(np.mean([m['wind_from_official'] for m in mem
-                                  if m['wind_from_official'] is not None] or [np.nan]))
-            q_off = sum(m['q_official'] for m in mem)
-            ime_off = sum(m['ime_official'] for m in mem)
-            qual = ','.join(sorted({m['quality'] for m in mem}))
-            #Cuando varias plumas comparten huella, la L que las cubre a todas es
-            #la mayor de sus fetch.
-            fetch = max([m['fetch_official'] for m in mem if m['fetch_official']] or [0]) or None
-
-            r_l = quantify(ret_lars, mask, u10, gas, ueff_mode, l_mode, fetch)
-            r_a = quantify(ret_adv, mask, u10, gas, ueff_mode, l_mode, fetch)
-
-            rows_out.append(dict(scene=scene, plumes=labels, quality=qual,
-                                 plume_id=';'.join(m['plume_id'] for m in mem),
-                                 datetime=mem[0]['datetime'],
-                                 lat=round(float(np.mean([m['lat'] for m in mem])), 6),
-                                 lon=round(float(np.mean([m['lon'] for m in mem])), 6),
-                                 shared_footprint=was_split, n_pix=int(mask.sum()),
-                                 u10=u10, wind_dir=wdir,
-                                 wind_source=mem[0]['wind_source_official'],
-                                 ueff=r_l['ueff'], ueff_mode=ueff_mode,
-                                 L=r_l['L'], l_mode=l_mode, fetch_off=fetch,
-                                 ime_off=ime_off, q_off=q_off,
-                                 ime_lars=r_l['IME'], q_lars=r_l['Q'], err_lars=r_l['err_Q'],
-                                 mean_lars=r_l['mean_enh'],
-                                 ime_adv=r_a['IME'], q_adv=r_a['Q'], err_adv=r_a['err_Q'],
-                                 mean_adv=r_a['mean_enh'],
-                                 q_lars_over_off=(r_l['Q'] / q_off if q_off else None),
-                                 q_adv_over_off=(r_a['Q'] / q_off if q_off else None),
-                                 q_adv_over_lars=(r_a['Q'] / r_l['Q'] if r_l['Q'] else None)))
+            rows_out.append(_row(scene, mem, mask, mask, ret_lars, ret_adv, gas,
+                                 ueff_mode, l_mode, was_split))
 
     save_maps(ret_lars, ret_adv, lab, scene, gas, psave)
     return rows_out, ret_lars, ret_adv
@@ -430,6 +480,10 @@ def main():
     ap.add_argument('--gas', default='ch4', choices=list(GAS_LUT))
     ap.add_argument('-o', '--output-dir', default=None, help='Carpeta de salida (por defecto: out_compare/ junto al primer .h5).')
     ap.add_argument('--force', action='store_true', help='Recalcula los MF aunque exista cache .npy.')
+    ap.add_argument('--mask-mode', choices=['footprint', 'grow'], default='footprint',
+                    help="'footprint' usa la huella del quicklook oficial, igual para los dos MF: aisla el RETRIEVAL, pero no sirve para medir exactitud contra el oficial porque no es la mascara con la que ellos calcularon su IME. 'grow' hace que cada MF se delinee solo con el umbral k*sigma desde la fuente, que es lo que se haria en produccion: mide pipeline completo contra pipeline completo.")
+    ap.add_argument('--sigma', type=float, default=2.0,
+                    help='Umbral k*sigma para --mask-mode grow.')
     ap.add_argument('--slim', action='store_true',
                     help='CSV reducido: solo escena, pluma, calidad, lat/lon, u10, N y las tres Q (GT, MF normal, MF por grupos de columnas).')
     ap.add_argument('--per-plume', action='store_true',
@@ -464,7 +518,8 @@ def main():
         try:
             rows, _, _ = process_scene(f, args.gas, psave, adv_kwargs, force=args.force,
                                        ueff_mode=args.ueff_mode, l_mode=args.l_mode,
-                                       per_plume=args.per_plume)
+                                       per_plume=args.per_plume,
+                                       mask_mode=args.mask_mode, sigma=args.sigma)
             all_rows.extend(rows)
         except Exception as e:
             import traceback; traceback.print_exc()
