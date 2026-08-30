@@ -430,6 +430,8 @@ def main():
     ap.add_argument('--gas', default='ch4', choices=list(GAS_LUT))
     ap.add_argument('-o', '--output-dir', default=None, help='Carpeta de salida (por defecto: out_compare/ junto al primer .h5).')
     ap.add_argument('--force', action='store_true', help='Recalcula los MF aunque exista cache .npy.')
+    ap.add_argument('--slim', action='store_true',
+                    help='CSV reducido: solo escena, pluma, calidad, lat/lon, u10, N y las tres Q (GT, MF normal, MF por grupos de columnas).')
     ap.add_argument('--per-plume', action='store_true',
                     help='Una fila por pluma del GeoJSON. Cuando varias comparten huella conexa, la huella se reparte por fuente mas cercana. Sin la flag, la huella compartida se cuantifica una sola vez contra la suma de sus emisiones.')
     ap.add_argument('--ueff-mode', choices=['cm', 'lars'], default='cm',
@@ -472,9 +474,20 @@ def main():
 
     if all_rows:
         out_csv = os.path.join(psave, f'compare_mf_{args.gas}.csv')
+        if args.slim:
+            #Lo esencial: donde esta la pluma, con que viento, y las TRES Q.
+            rows = [dict(escena=r['scene'], pluma=r['plumes'], calidad=r['quality'],
+                         lat=r['lat'], lon=r['lon'], u10=round(r['u10'], 2),
+                         N_px=r['n_pix'],
+                         Q_GT=round(r['q_off'], 1),
+                         Q_MF_normal=round(r['q_lars'], 1),
+                         Q_MF_columnas=round(r['q_adv'], 1))
+                    for r in all_rows]
+        else:
+            rows = all_rows
         with open(out_csv, 'w', newline='', encoding='utf-8') as fh:
-            wcsv = csv.DictWriter(fh, fieldnames=list(all_rows[0].keys()))
-            wcsv.writeheader(); wcsv.writerows(all_rows)
+            wcsv = csv.DictWriter(fh, fieldnames=list(rows[0].keys()))
+            wcsv.writeheader(); wcsv.writerows(rows)
         print(f'\n[csv] {out_csv}')
 
 
