@@ -1,157 +1,157 @@
-#Cuantificación semi-automática de plumas de CH₄ en Tanager
+# Semi-automatic quantification of CH₄ plumes in Tanager
 
-Detectar una pluma de metano ya es rutina; convertirla en un kg/h defendible no lo es.
-Este repo es un pipeline abierto que va del cubo de radiancia de **Tanager** a un caudal
-por pluma, dejando al humano exactamente donde hace falta criterio y en ningún otro sitio.
+Detecting a methane plume is already routine; turning it into a defensible kg/h is not.
+This repo is an open pipeline that goes from a **Tanager** radiance cube to a per-plume flow
+rate, leaving the human exactly where judgment is needed and nowhere else.
 
-**El algoritmo delimita, el operador confirma.**
+**The algorithm delineates, the operator confirms.**
 
 ```
-radiancia L1  →  matched filter (ppm·m)  →  anomalía wavelet  →  candidatos k·σ
-                                                                      ↓
-                              Q (kg/h)  ←  IME · Ueff / L  ←  máscara por componente conexa
+L1 radiance  →  matched filter (ppm·m)  →  wavelet anomaly  →  k·σ candidates
+                                                                     ↓
+                             Q (kg/h)  ←  IME · Ueff / L  ←  connected-component mask
 ```
 
-## Empezar por aquí
+## Start here
 
-Un solo comando, que elige solo el camino según lo que traiga cada escena:
+A single command, which picks the path on its own based on what each scene provides:
 
 ```bash
 python auto_pipeline/quantify_tanager.py tanager/*_ortho_radiance_hdf5.h5
 ```
 
-| La escena trae… | Camino | Qué pasa |
+| If the scene includes… | Path | What happens |
 |---|---|---|
-| `ql_ch4_json` **con** plumas | automático | Se siembra de las fuentes oficiales, sin clics. |
-| sin GeoJSON, o vacío | picker | Propone candidatos sobre el mapa wavelet; tú eliges con un clic. |
+| `ql_ch4_json` **with** plumes | automatic | Seeded from the official sources, no clicks needed. |
+| no GeoJSON, or empty | picker | Proposes candidates on the wavelet map; you pick with a click. |
 
-`--dry-run` dice qué haría sin correr nada. `--mode gt` / `--mode pick` lo fuerzan.
+`--dry-run` reports what it would do without running anything. `--mode gt` / `--mode pick` force one path or the other.
 
-### El picker, paso a paso
+### The picker, step by step
 
 ```bash
-python auto_pipeline/pick_plumes_wavelet.py <escena_ortho_radiance_hdf5.h5>
+python auto_pipeline/pick_plumes_wavelet.py <scene_ortho_radiance_hdf5.h5>
 ```
 
-1. Corre **los dos** matched filters y saca 4 paneles: anomalía wavelet y realce físico, para cada uno.
-2. Propone como candidato **todo cúmulo** sobre `k·σ` con ≥ `--min-pix` píxeles, tomando la
-   **unión de los dos** MF para que ninguna pluma se pierda porque un retrieval no la vio.
-   Cada candidato sale numerado, coloreado por quién lo detectó (amarillo = solo MF por columna,
-   azul = solo MF por grupos, verde = los dos) y con **su link de Google Maps**, para descartar
-   falsos positivos antes de cuantificar nada.
-3. Un clic hace crecer la máscara por componente conexa. Aceptas, ajustas σ, o rechazas.
-4. Cuantifica con los dos MF sobre la **misma** máscara y el **mismo** viento (ERA5 por defecto,
-   uno por pluma en su propia posición) y guarda CSV + PNG.
+1. Runs **both** matched filters and produces 4 panels: wavelet anomaly and physical enhancement, for each.
+2. Proposes as a candidate **every cluster** above `k·σ` with ≥ `--min-pix` pixels, taking the
+   **union of both** MFs so no plume is missed because one retrieval didn't see it.
+   Each candidate comes numbered, color-coded by which one detected it (yellow = column-wise MF only,
+   blue = group-wise MF only, green = both), with **its Google Maps link**, so you can rule out
+   false positives before quantifying anything.
+3. One click grows the mask via connected component. You accept, adjust σ, or reject.
+4. Quantifies with both MFs on the **same** mask and the **same** wind (ERA5 by default,
+   one per plume at its own position) and saves CSV + PNG.
 
-## Resultados
+## Results
 
-`results/` trae las 20 plumas de Carbon Mapper de dos escenas Tanager, cuantificadas por
-este pipeline y contrastadas contra el producto oficial.
+`results/` contains the 20 Carbon Mapper plumes from two Tanager scenes, quantified by
+this pipeline and checked against the official product.
 
-### Por qué comparar Q contra Q no significa lo que parece
+### Why comparing Q against Q doesn't mean what it seems to
 
-Despejando `Q = IME·3600·Ueff/L` sobre las 20 plumas del GeoJSON sale, **exacto y sin
-excepción**, `Ueff = u10` y `L = fetch`. La parametrización clásica del repo
-(`Ueff = a·u10 + b`, Guanter et al. 2021 / Roger et al. 2024) es 1.8–2.4× menor a esos vientos.
+Solving `Q = IME·3600·Ueff/L` over the 20 plumes in the GeoJSON gives, **exactly and without
+exception**, `Ueff = u10` and `L = fetch`. The repo's classic parameterization
+(`Ueff = a·u10 + b`, Guanter et al. 2021 / Roger et al. 2024) is 1.8–2.4× lower at those wind speeds.
 
-Re-derivando Q bajo cuatro combinaciones defendibles de máscara y escala de longitud:
+Re-deriving Q under four defensible combinations of mask and length scale:
 
-| máscara | L | LARS/oficial | ADV/oficial | ADV/LARS |
+| mask | L | LARS/official | ADV/official | ADV/LARS |
 |---|---|---|---|---|
-| huella quicklook | fetch | 2.01 | 2.43 | 1.26 |
-| huella quicklook | √área | 2.07 | 2.37 | 1.14 |
-| crecida k·σ propia | √área | 2.07 | 2.06 | 1.00 |
-| crecida k·σ propia | fetch | 1.46 | 0.92 | 0.63 |
+| quicklook footprint | fetch | 2.01 | 2.43 | 1.26 |
+| quicklook footprint | √area | 2.07 | 2.37 | 1.14 |
+| own k·σ growth | √area | 2.07 | 2.06 | 1.00 |
+| own k·σ growth | fetch | 1.46 | 0.92 | 0.63 |
 
-El cociente contra el oficial se mueve entre **0.92× y 2.43×** sin tocar un solo dato.
-Eso no es error de medida, es convención — y ninguna comparación entre inventarios significa
-nada si no se declara la máscara y el Ueff.
+The ratio against the official value ranges between **0.92× and 2.43×** without touching a single
+data point. That's not measurement error, it's convention — and no comparison between inventories
+means anything unless the mask and the Ueff are stated.
 
-### Los dos matched filters
+### The two matched filters
 
-Los dos comparten el target `t = mu · k` (con `k` de la LUT de libRadtran), así que sus
-salidas están en ppm·m y son comparables. Solo cambia cómo se estima el **fondo**:
+Both share the target `t = mu · k` (with `k` from the libRadtran LUT), so their outputs are
+in ppm·m and comparable. Only the way the **background** is estimated changes:
 
-| | Fondo |
+| | Background |
 |---|---|
-| **por columna** (`Retrieval_methods.AT_MF`) | una covarianza por columna, `pinv`, sin regularizar |
-| **por grupos** (`scripts/mf_advanced.py`) | columnas agrupadas (10–30) según el striping; dentro de cada grupo PCA(3) + k-means, una covarianza por clúster con shrinkage |
+| **column-wise** (`Retrieval_methods.AT_MF`) | one covariance per column, `pinv`, unregularized |
+| **group-wise** (`scripts/mf_advanced.py`) | columns grouped (10–30) according to striping; within each group, PCA(3) + k-means, one covariance per cluster with shrinkage |
 
-Con la máscara controlada, el de grupos recupera 14–26 % más masa, pero:
+With the mask held fixed, the group-wise one recovers 14–26 % more mass, but:
 
-- SNR **peor** en las dos escenas (0.71 vs 1.12, y 3.10 vs 3.97)
-- cola del fondo 4–9× más pesada (p99.9 = 3251 y 8171 vs 804 y 882 ppm·m)
-- **no delinea 3 de 20 plumas** al umbral estándar de 2σ
-- Q negativa en una pluma real
+- SNR is **worse** in both scenes (0.71 vs 1.12, and 3.10 vs 3.97)
+- background tail 4–9× heavier (p99.9 = 3251 and 8171 vs 804 and 882 ppm·m)
+- **fails to delineate 3 of 20 plumes** at the standard 2σ threshold
+- negative Q on one real plume
 
-Agrupar columnas para tener más muestras por covarianza no compensa el ruido que introduce.
+Grouping columns to get more samples per covariance doesn't make up for the noise it introduces.
 
 ```bash
-python auto_pipeline/compare_mf.py <escenas.h5> --per-plume --slim
+python auto_pipeline/compare_mf.py <scenes.h5> --per-plume --slim
 ```
 
-### Convención de cuantificación
+### Quantification convention
 
-| Flag | Opciones | Default |
+| Flag | Options | Default |
 |---|---|---|
-| `--ueff-mode` | `cm` (Ueff = u10, la de Carbon Mapper) · `lars` (a·u10 + b) | `cm` |
+| `--ueff-mode` | `cm` (Ueff = u10, Carbon Mapper's) · `lars` (a·u10 + b) | `cm` |
 | `--l-mode` | `sqrt-area` · `fetch` · `hull` | `sqrt-area` |
-| `--mask-mode` | `footprint` (aísla el retrieval) · `grow` (pipeline completo) | `footprint` |
+| `--mask-mode` | `footprint` (isolates the retrieval) · `grow` (full pipeline) | `footprint` |
 
-`sqrt-area` = `√(N·gsd²)`, que es lo que ya usaba `extract_Q`, y contra el `fetch` oficial de
-las 20 plumas da mediana **0.92**. El convex hull da 1.73 y se dispara hasta 5× en plumas
-alargadas, así que no es comparable con el producto oficial.
+`sqrt-area` = `√(N·gsd²)`, which is what `extract_Q` already used, and against the official
+`fetch` of the 20 plumes gives a median of **0.92**. The convex hull gives 1.73 and spikes up to
+5× on elongated plumes, so it isn't comparable with the official product.
 
-## Por qué Tanager
+## Why Tanager
 
-- **30 m** frente a los 60 m de EMIT: 4× píxeles por pluma. La calidad de la máscara entra
-  directo en Q por partida doble, vía IME y vía L.
-- **Cobertura.** EMIT observa únicamente entre 52°N y 52°S — es la inclinación de la ISS.
-  La escena de Yamal de este repo está a **66.5°N**, 14° fuera de ese límite: sus 8 plumas
-  son inobservables desde la ISS, no por agenda sino por órbita.
+- **30 m** versus EMIT's 60 m: 4× the pixels per plume. Mask quality feeds directly into Q
+  twice over, via IME and via L.
+- **Coverage.** EMIT only observes between 52°N and 52°S — that's the ISS's inclination.
+  This repo's Yamal scene is at **66.5°N**, 14° outside that limit: its 8 plumes
+  are unobservable from the ISS, not for scheduling reasons but because of orbit.
 
   > "During its planned one-year mission, EMIT will collect data over Earth's dust-source
   > regions […] between 52° north and south latitude."
   > — Smith, J. M. (2023), *Meet EMIT, the Newest Imaging Spectrometer*, NASA Earthdata.
 
-## Estructura
+## Structure
 
 | | |
 |---|---|
-| `auto_pipeline/quantify_tanager.py` | **punto de entrada**; enruta GT vs picker |
-| `auto_pipeline/pick_plumes_wavelet.py` | picker interactivo con los dos MF |
-| `auto_pipeline/compare_mf.py` | comparación de los dos MF contra el GT |
-| `auto_pipeline/plumes_from_json.py` | siembra de plumas desde `ql_ch4_json` |
-| `auto_pipeline/wavelet_den.py` | anomalía wavelet |
-| `auto_pipeline/auto_plume.py` | delineación semi-automática (EMIT y genérico) |
-| `scripts/mf_advanced.py` | matched filter por grupos de columnas |
-| `scripts/Retrieval_methods.py` | matched filter por columna |
-| `scripts/Tanager_reader.py` | lector Tanager (ortho y basic) |
-| `scripts/quant_func_v2.py` | IME, Ueff, conversión a kg |
-| `results/` | las 20 plumas cuantificadas, 4 configuraciones |
+| `auto_pipeline/quantify_tanager.py` | **entry point**; routes GT vs picker |
+| `auto_pipeline/pick_plumes_wavelet.py` | interactive picker with both MFs |
+| `auto_pipeline/compare_mf.py` | comparison of both MFs against GT |
+| `auto_pipeline/plumes_from_json.py` | seeds plumes from `ql_ch4_json` |
+| `auto_pipeline/wavelet_den.py` | wavelet anomaly |
+| `auto_pipeline/auto_plume.py` | semi-automatic delineation (EMIT and generic) |
+| `scripts/mf_advanced.py` | matched filter by column groups |
+| `scripts/Retrieval_methods.py` | column-wise matched filter |
+| `scripts/Tanager_reader.py` | Tanager reader (ortho and basic) |
+| `scripts/quant_func_v2.py` | IME, Ueff, conversion to kg |
+| `results/` | the 20 quantified plumes, 4 configurations |
 
-Otras misiones (EMIT, EnMAP, PRISMA, GF5, AVIRIS-NG) siguen soportadas vía
-`auto_pipeline/pipeline_auto.py`; ver la sección al final.
+Other missions (EMIT, EnMAP, PRISMA, GF5, AVIRIS-NG) are still supported via
+`auto_pipeline/pipeline_auto.py`; see the section at the end.
 
-Gases cuantificables: `ch4`, `co2`, `c2h4`, `c2h2`, `nh3`.
+Quantifiable gases: `ch4`, `co2`, `c2h4`, `c2h2`, `nh3`.
 
-## Instalación
+## Installation
 
-Entorno conda con GDAL, rasterio, h5py, pyproj, scikit-image, scikit-learn, PyWavelets,
-scipy, matplotlib. En Windows hay que **activar el entorno**, no basta con invocar el
-`python.exe`: sin el `PATH` del entorno, LAPACK no carga sus DLL y `np.linalg.lstsq`
-revienta con `0xc06d007f`.
+Conda environment with GDAL, rasterio, h5py, pyproj, scikit-image, scikit-learn, PyWavelets,
+scipy, matplotlib. On Windows you have to **activate the environment**, invoking the
+`python.exe` directly isn't enough: without the environment's `PATH`, LAPACK can't load its
+DLLs and `np.linalg.lstsq` crashes with `0xc06d007f`.
 
 ```bash
-conda activate <tu-entorno>
+conda activate <your-environment>
 python auto_pipeline/quantify_tanager.py --help
 ```
 
-Hacen falta además las LUT de libRadtran (ruta en `scripts/variable_definition.py`).
+The libRadtran LUTs are also required (path set in `scripts/variable_definition.py`).
 
-## Otras misiones (EMIT, EnMAP, PRISMA, GF5, AVIRIS-NG)
+## Other missions (EMIT, EnMAP, PRISMA, GF5, AVIRIS-NG)
 
-### Pipeline principal (una pluma por gas)
+### Main pipeline (one plume per gas)
 
 ```bash
 python auto_pipeline/pipeline_auto.py "<EMIT_L1B_RAD...nc>" --gas ch4
@@ -159,63 +159,63 @@ python auto_pipeline/pipeline_auto.py "<...ortho_radiance_hdf5.h5>" --gas ch4 --
 python auto_pipeline/pipeline_auto.py "<RAD.nc>" --gas ch4,nh3,c2h4 -s "Carrasco"
 ```
 
-Flags útiles:
+Useful flags:
 
-| Flag | Descripción |
+| Flag | Description |
 |---|---|
-| `--gas` | Gas o lista separada por comas. |
-| `--mission` | `EMIT`, `Tanager`, `EnMAP`, `PRISMA`, `GF5`, `AVIRIS-NG`. Si se omite, se auto-detecta del nombre del archivo. |
-| `--wind {geos,era5}` | Fuente de viento. `--era5` es atajo de `--wind era5` y busca el `.nc` de ERA5 junto al archivo de entrada. |
-| `--wind-value` | Viento manual en m/s, solo para esa corrida. |
-| `--sigma` | Multiplicador de sigma del umbral de la pluma (default 2.0). |
+| `--gas` | Gas or comma-separated list. |
+| `--mission` | `EMIT`, `Tanager`, `EnMAP`, `PRISMA`, `GF5`, `AVIRIS-NG`. If omitted, auto-detected from the input filename. |
+| `--wind {geos,era5}` | Wind source. `--era5` is shorthand for `--wind era5` and looks for the ERA5 `.nc` next to the input file. |
+| `--wind-value` | Manual wind in m/s, for that run only. |
+| `--sigma` | Plume threshold sigma multiplier (default 2.0). |
 
-Mapa de la pluma sobre imagen de fondo:
+Plume map over a basemap image:
 
 ```bash
 python auto_pipeline/plot_plume_map.py --lat <lat> --lon <lon> --gas ch4 --sigma 2.0
 ```
 
-### Flujo interactivo multi-pluma (Tanager, CH4)
+### Interactive multi-plume workflow (Tanager, CH4)
 
-Cuando una escena trae **varias plumas**, este script las detecta todas y deja elegir
-cuáles cuantificar:
+When a scene has **multiple plumes**, this script detects all of them and lets you choose
+which ones to quantify:
 
 ```bash
 python scripts/quantify_ch4_tanager_multi.py
 ```
 
-Qué hace:
+What it does:
 
-1. Aplica el denoiser wavelet sobre el mapa de enhancement.
-2. Se queda con los máximos locales sobre el percentil **P99.8** que además superen
-   **2.5σ** en el enhancement crudo, y suprime candidatos a menos de **1000 m** de uno
-   más intenso — así una sola pluma no genera varios puntos.
-3. Imprime una tabla numerada con un **link de Google Maps por candidato**, para revisar
-   uno a uno y descartar falsos positivos antes de marcar nada.
-4. Abre una ventana con los paneles *enhancement* + *wavelet* y los candidatos marcados.
-5. **Un click izquierdo dentro de una pluma** hace crecer su máscara automáticamente
-   (`grow_plume_from_source`: mediana 3×3, umbral a `sigma·std`, componente conexa).
-   No hay que dibujar polígonos. Click derecho deshace, Enter termina.
-6. Cuantifica cada pluma seleccionada (IME + Ueff + viento) y muestra una tabla resumen;
-   guarda los resultados en CSV y la figura en `out_tanager/plumas_seleccionadas.png`.
+1. Applies the wavelet denoiser to the enhancement map.
+2. Keeps local maxima above the **P99.8** percentile that also exceed **2.5σ** in the raw
+   enhancement, and suppresses candidates within **1000 m** of a stronger one — so a single
+   plume doesn't generate multiple points.
+3. Prints a numbered table with a **Google Maps link per candidate**, so you can review
+   each one and rule out false positives before marking anything.
+4. Opens a window with the *enhancement* + *wavelet* panels and the marked candidates.
+5. **A left click inside a plume** grows its mask automatically
+   (`grow_plume_from_source`: 3×3 median, threshold at `sigma·std`, connected component).
+   No need to draw polygons. Right click undoes, Enter finishes.
+6. Quantifies each selected plume (IME + Ueff + wind) and shows a summary table;
+   saves the results to CSV and the figure to `out_tanager/plumas_seleccionadas.png`.
 
-Ajustes: `--pctl 99.9` (más estricto), `--n-sigma 3`, `--min-dist 1500`, `--top 15`,
-`--sigma 2.0`, `--wind-value 3.2` (evita la descarga de GEOS-FP).
+Adjustments: `--pctl 99.9` (stricter), `--n-sigma 3`, `--min-dist 1500`, `--top 15`,
+`--sigma 2.0`, `--wind-value 3.2` (avoids the GEOS-FP download).
 
-## Nota sobre Tanager
+## Note on Tanager
 
-`Tanager_reader.py` auto-detecta el tipo de producto:
+`Tanager_reader.py` auto-detects the product type:
 
-- `ortho_radiance_hdf5` → `HDFEOS/GRIDS/HYP`, geotransform y EPSG leídos del `StructMetadata`.
-- `basic_radiance_hdf5` → `HDFEOS/SWATHS/HYP`, con `Latitude`/`Longitude` embebidos;
-  la malla se deriva del *bounding box* lat/lon.
+- `ortho_radiance_hdf5` → `HDFEOS/GRIDS/HYP`, geotransform and EPSG read from the `StructMetadata`.
+- `basic_radiance_hdf5` → `HDFEOS/SWATHS/HYP`, with embedded `Latitude`/`Longitude`;
+  the grid is derived from the lat/lon *bounding box*.
 
-Tanager usa píxel de **30 m**, con los mismos coeficientes de Ueff que EnMAP/PRISMA/GF5.
+Tanager uses a **30 m** pixel, with the same Ueff coefficients as EnMAP/PRISMA/GF5.
 
-## Datos
+## Data
 
-Los archivos de datos **no** se versionan: los `.h5` de Tanager pesan 580–682 MB cada uno
-y el `.nc` de EMIT ~1.8 GB, muy por encima del límite de 100 MB de GitHub. El `.gitignore`
-excluye `*.nc`, `*.h5`, `*.tif`, `*.npy`, `TanagerScene*/`, `out_tanager/` y `output/`.
+Data files are **not** version-controlled: Tanager's `.h5` files weigh 580–682 MB each
+and EMIT's `.nc` is ~1.8 GB, well above GitHub's 100 MB limit. The `.gitignore`
+excludes `*.nc`, `*.h5`, `*.tif`, `*.npy`, `TanagerScene*/`, `out_tanager/` and `output/`.
 
-Para correr se necesita además el repo original de HS_tool y las LUT de libRadtran.
+Running it also requires the original HS_tool repo and the libRadtran LUTs.
