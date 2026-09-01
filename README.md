@@ -1,4 +1,4 @@
-# agu26-amonia — cuantificación semi-automática de plumas de CH₄ en Tanager
+#Cuantificación semi-automática de plumas de CH₄ en Tanager
 
 Detectar una pluma de metano ya es rutina; convertirla en un kg/h defendible no lo es.
 Este repo es un pipeline abierto que va del cubo de radiancia de **Tanager** a un caudal
