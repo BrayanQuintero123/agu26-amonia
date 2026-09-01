@@ -12,6 +12,7 @@ Tecnica bilineal tomada de wavelet_plume_finder_public/emit_ime.py::read_wind_er
 
 import os
 import sys
+import time
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 _SCRIPTS = os.path.join(os.path.dirname(_HERE), 'scripts')
@@ -31,6 +32,48 @@ def format_dw_url(year, month, day, hour):
     return template.format(y=year, m=month, d=day, h=hour)
 
 
+def _download_with_retry(url, tmp_file, max_retries=5, timeout=120):
+    """
+    Streams `url` to `tmp_file`, retrying with exponential backoff on dropped
+    connections or truncated transfers (IncompleteRead / ChunkedEncodingError).
+    Verifies the number of bytes written matches Content-Length when the
+    server provides it, so a partial file never silently gets passed to
+    netCDF4.Dataset().
+    """
+    last_exc = None
+    for attempt in range(1, max_retries + 1):
+        try:
+            with requests.get(url, stream=True, timeout=timeout) as r:
+                r.raise_for_status()
+                expected = r.headers.get("Content-Length")
+                expected = int(expected) if expected is not None else None
+
+                written = 0
+                with open(tmp_file, "wb") as f:
+                    for chunk in r.iter_content(chunk_size=1024 * 1024):
+                        if chunk:
+                            f.write(chunk)
+                            written += len(chunk)
+
+                if expected is not None and written != expected:
+                    raise IOError(
+                        f"Incomplete download: got {written} bytes, expected {expected}"
+                    )
+            return  # success
+
+        except (requests.exceptions.RequestException, IOError) as e:
+            last_exc = e
+            if os.path.exists(tmp_file):
+                os.remove(tmp_file)
+            if attempt == max_retries:
+                break
+            wait = min(2 ** attempt, 30)
+            print(f"  Download attempt {attempt}/{max_retries} failed ({e}); retrying in {wait}s...")
+            time.sleep(wait)
+
+    raise RuntimeError(f"Failed to download {url} after {max_retries} attempts") from last_exc
+
+
 def get_geos_u10(date: str, hour: int, coords: tuple, pbase): #stores the file, reads it, then removes it
     year, month, day = date.split("-")
     lat_c, lon_c = coords
@@ -41,18 +84,20 @@ def get_geos_u10(date: str, hour: int, coords: tuple, pbase): #stores the file, 
     os.makedirs(tmp_path, exist_ok=True)
 
     tmp_file = os.path.join(pbase + 'tmp/', "wind.nc")
-    r = requests.get(dw_url)
-    open(tmp_file, "wb").write(r.content)
+    _download_with_retry(dw_url, tmp_file)
 
-    winds = Dataset(tmp_file)
+    try:
+        winds = Dataset(tmp_file)
 
-    lat = np.asarray(winds["lat"][:], dtype=float)
-    lon = np.asarray(winds["lon"][:], dtype=float)
-    u_grid = np.asarray(winds["U10M"][:][0], dtype=float) #(nlat, nlon)
-    v_grid = np.asarray(winds["V10M"][:][0], dtype=float)
+        lat = np.asarray(winds["lat"][:], dtype=float)
+        lon = np.asarray(winds["lon"][:], dtype=float)
+        u_grid = np.asarray(winds["U10M"][:][0], dtype=float) #(nlat, nlon)
+        v_grid = np.asarray(winds["V10M"][:][0], dtype=float)
 
-    winds.close()
-    os.remove(tmp_file)
+        winds.close()
+    finally:
+        if os.path.exists(tmp_file):
+            os.remove(tmp_file)
 
     #RegularGridInterpolator requires strictly-ascending axes
     if lat[0] > lat[-1]:

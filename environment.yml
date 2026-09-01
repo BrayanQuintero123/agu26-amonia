@@ -1,0 +1,29 @@
+# Entorno para el pipeline de cuantificacion de plumas (Tanager / EMIT).
+#
+#   conda env create -f environment.yml
+#   conda activate hstool
+#
+# En Windows hay que ACTIVAR el entorno, no basta con invocar el python.exe del
+# entorno: sin su PATH, LAPACK no carga sus DLL y np.linalg.lstsq revienta con
+# 0xc06d007f dentro del calculo del target k.
+name: hstool
+channels:
+  - conda-forge
+dependencies:
+  - python=3.11
+  - numpy=2.4
+  - scipy=1.17
+  - matplotlib=3.11
+  - h5py=3.16
+  - netcdf4=1.7
+  - rasterio=1.4
+  - gdal=3.12
+  - pyproj=3.7
+  - scikit-image=0.26
+  - scikit-learn=1.9      # PCA + k-means del matched filter por grupos de columnas
+  - pywavelets=1.8        # anomalia wavelet (deteccion de candidatos)
+  - matplotlib-scalebar
+  - tk                    # backend TkAgg: el picker necesita ginput interactivo
+  - pip
+  - pip:
+      - cdsapi            # descarga de ERA5 (necesita ~/.cdsapirc)

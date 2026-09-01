@@ -253,63 +253,63 @@ def extract_ueff (u10, mission, gas):
         if mission == 'EMIT':
             a, b = 0.31, 0.4 #Guanter et al., (2024)
             pix_res = 60 #m
-        elif mission == 'EnMAP' or mission == 'PRISMA' or mission == 'GF5' or mission == 'ZY1':
+        elif mission in ('EnMAP', 'PRISMA', 'GF5', 'ZY1', 'Tanager'):
             a, b = 0.34, 0.44 #Guanter et al., (2021); Roger et al., (2024)
             pix_res = 30 #m
         elif mission == 'AVIRIS-NG': #Simplification - probably not accurate
             pix_res = 4
             a, b = 1, 0
-            
+
         ueff = a*u10+b
-        
+
         return ueff, a, err_u10, pix_res, bool_thres
-    
+
     elif gas == 'co2': #simplification. calibrations should be done
-        
+
         if mission == 'EMIT':
-            a, b = 1, 0 
+            a, b = 1, 0
             pix_res = 60 #m
-        elif mission == 'EnMAP' or mission == 'PRISMA' or mission == 'GF5' or mission == 'ZY1':
-            a, b = 1, 0 
+        elif mission in ('EnMAP', 'PRISMA', 'GF5', 'ZY1', 'Tanager'):
+            a, b = 1, 0
             pix_res = 30 #m
         elif mission == 'AVIRIS-NG':
             pix_res = 4
             a, b = 1, 0
-            
+
         ueff = a*u10+b
-        
+
         return ueff, a, err_u10, pix_res, bool_thres
-    
+
     elif gas == 'c2h4':
-        
+
         if mission == 'EMIT':
             a, b = 0.48, 0.59 #Extracted from our own simulations
             pix_res = 60 #m
-        elif mission == 'EnMAP' or mission == 'PRISMA' or mission == 'GF5' or mission == 'ZY1':
+        elif mission in ('EnMAP', 'PRISMA', 'GF5', 'ZY1', 'Tanager'):
             a, b = 0.43, 0.61 #Currently only valid for GF5A (simulations)
             pix_res = 30 #m
         elif mission == 'AVIRIS-NG': #Simplification - probably not accurate
             pix_res = 4
             a, b = 1, 0
-            
+
         ueff = a*u10+b
-        
+
         return ueff, a, err_u10, pix_res, bool_thres
-    
+
     elif gas == 'c2h2':
-        
+
         if mission == 'EMIT':
             a, b = 0.47, 0.68 #Don't know yet
             pix_res = 60 #m
-        elif mission == 'EnMAP' or mission == 'PRISMA' or mission == 'GF5' or mission == 'ZY1':
+        elif mission in ('EnMAP', 'PRISMA', 'GF5', 'ZY1', 'Tanager'):
             a, b = None, None #Don't know yet
             pix_res = 30 #m
         elif mission == 'AVIRIS-NG': #Simplification - probably not accurate
             pix_res = 4
             a, b = 1, 0
-            
+
         ueff = a*u10+b
-        
+
         return ueff, a, err_u10, pix_res, bool_thres
     
     
@@ -323,9 +323,9 @@ def extract_ueff (u10, mission, gas):
             #tau = 1 h
             a_2, b_2 = 0.45, 0.9
             
-        elif mission == 'EnMAP' or mission == 'GF5':
+        elif mission in ('EnMAP', 'GF5', 'Tanager'):
             pix_res = 30 #m
-            
+
             #tau = inf
             a_1, b_1 = 0.42, 0.68
             #tau = 1 h

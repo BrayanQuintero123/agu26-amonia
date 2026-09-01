@@ -305,7 +305,7 @@ def emission_quantification_auto(dxgas_show, dxgas_quan, ref_rad, mission, gas, 
     if gas in ('ch4', 'co2', 'c2h4', 'c2h2'):
         if bool_det:
             lat_s, lon_s = georreference(path_folder, name, psave, name + '_tool4', gas, mask, source_coord)
-            if mission in ('EMIT', 'PRISMA', 'AVIRIS-NG'):
+            if mission in ('EMIT', 'PRISMA', 'AVIRIS-NG', 'Tanager'):
                 lat_s, lon_s = lat[source_coord[1], source_coord[0]], lon[source_coord[1], source_coord[0]]
             u10, wu, wv = _resolve_wind(ts, lat_s, lon_s, path_folder, psave, name, wind_source, era5_file, wind_value, wind_from)
             Q, err_Q, u10, err_u10 = extract_Q(dxgas_quan, mask, u10, mission, gas)
@@ -318,7 +318,7 @@ def emission_quantification_auto(dxgas_show, dxgas_quan, ref_rad, mission, gas, 
     elif gas == 'nh3':
         if bool_det:
             lat_s, lon_s = georreference(path_folder, name, psave, name + '_tool4', gas, mask, source_coord)
-            if mission in ('EMIT', 'PRISMA', 'AVIRIS-NG'):
+            if mission in ('EMIT', 'PRISMA', 'AVIRIS-NG', 'Tanager'):
                 lat_s, lon_s = lat[source_coord[1], source_coord[0]], lon[source_coord[1], source_coord[0]]
             u10, wu, wv = _resolve_wind(ts, lat_s, lon_s, path_folder, psave, name, wind_source, era5_file, wind_value, wind_from)
             Q_1, err_Q_1, Q_2, err_Q_2, u10, err_u10 = extract_Q(dxgas_quan, mask, u10, mission, gas)
@@ -331,7 +331,7 @@ def emission_quantification_auto(dxgas_show, dxgas_quan, ref_rad, mission, gas, 
     else:
         if bool_det:
             lat_s, lon_s = georreference(path_folder, name, psave, name + '_tool4', gas, mask, source_coord)
-            if mission in ('EMIT', 'PRISMA', 'AVIRIS-NG'):
+            if mission in ('EMIT', 'PRISMA', 'AVIRIS-NG', 'Tanager'):
                 lat_s, lon_s = lat[source_coord[1], source_coord[0]], lon[source_coord[1], source_coord[0]]
             u10 = wind_speed_bilinear(ts, lat_s, lon_s, path_folder, psave, name)
         else:

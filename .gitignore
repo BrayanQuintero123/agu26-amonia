@@ -4,6 +4,12 @@
 output/
 *.npy
 
+# Tanager data + outputs (the .h5 are 580-682 MB each)
+*.h5
+*.tif
+TanagerScene*/
+out_tanager/
+
 # Python
 __pycache__/
 *.pyc
@@ -12,3 +18,9 @@ __pycache__/
 # OS / editors
 .DS_Store
 Thumbs.db
+
+# Editor local
+.vscode/
+
+# Salidas de la comparacion de MF (los .npy y .png pesan; los .geojson de GT si se versionan)
+tanager/out_*/
